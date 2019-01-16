@@ -198,7 +198,7 @@ reg [$clog2(BURST_MAX+1):0] burst_remaining = 0;
 reg force_datamask;
 reg command_burst_terminate_sent = 0; // for read
 
-assign sdram_DQ = dbus_write ? dbus_writedata : {BYTE_AMOUNT*8{1'b0}};
+assign sdram_DQ = (state == STATE_WRITE || state == STATE_WRITE_BEGIN) ? dbus_writedata : {BYTE_AMOUNT*8{1'bZ}};
 
 assign sdram_DM = (~dbus_byteenable) | {BYTE_AMOUNT{force_datamask}};
 

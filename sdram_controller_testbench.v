@@ -46,7 +46,7 @@ end
 
 
 reg [3:0] state = 0;
-reg [3:0] burst_left = 1;
+reg [4:0] burst_left = 1;
 
 always @(posedge clk) begin
 	case(state)
@@ -93,7 +93,38 @@ always @(posedge clk) begin
 			end
 		end
 		3: begin
-			
+			if(!dbus_read) begin
+				dbus_read <= 1;
+				dbus_address <= {13'b0000000000000,2'b01,9'b000001100, 1'b0};
+				burst_left <= 16;
+				dbus_burstcount <= 16;
+				dbus_byteenable <= 2'b11;
+			end
+			if(dbus_read && dbus_readdatavalid && !dbus_waitrequest) begin
+				if(burst_left)
+					burst_left <= burst_left - 1;
+				else begin
+					state <= 4;
+					dbus_write <= 0;
+					dbus_read <= 0;
+				end
+			end
+		end
+		4: begin
+			if(!dbus_read) begin
+				dbus_read <= 1;
+				dbus_address <= {13'b0000000000000,2'b01,9'b000001100, 1'b0};
+				dbus_burstcount <= 1;
+				dbus_byteenable <= 2'b11;
+			end
+			if(dbus_read && dbus_readdatavalid && !dbus_waitrequest) begin
+				state <= 5;
+				dbus_write <= 0;
+				dbus_read <= 0;
+			end
+		end
+		5: begin
+		
 		end
 	endcase
 end
