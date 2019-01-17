@@ -282,6 +282,7 @@ always @* begin
 		STATE_READ: begin
 			dbus_readdatavalid = 1;
 			dbus_waitrequest = 0;
+			
 			if(burst_remaining) begin
 				command = COMMAND_NOP;
 			end else if(!command_burst_terminate_sent) begin
@@ -399,20 +400,20 @@ always @(posedge clk or negedge rst) begin
 				nxt_state <= STATE_CLOSE_ALL_BANKS;
 			end
 			STATE_READ_BEGIN: begin
+				// read data valid low, 2 cycles
 				burst_remaining <= burst_remaining - 2;
 				state <= STATE_NOP;
 				nxt_state <= STATE_READ;
 				delay_counter <= tCAS - 1 - 1;
 			end
 			STATE_READ: begin
-				if(burst_remaining) begin
-					burst_remaining <= burst_remaining - 1;
-					command_burst_terminate_sent <= 0;
-				end else if(!command_burst_terminate_sent) begin
-					command_burst_terminate_sent <= 1;
-				end else begin
-					state <= STATE_CLOSE_ALL_BANKS;
-				end
+				burst_remaining
+				// read data valid high burst_remaining - 2 cycles
+				// on last cycle send burst stop
+			end
+			STATE_READ_BURST_STOP: begin
+				// 2 last cycles read data valid high if data still reading
+				state <= STATE_CLOSE_ALL_BANKS;
 			end
 		endcase
 	end
