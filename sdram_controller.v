@@ -33,7 +33,7 @@ module sdram_controller(
 	inout	wire [(8 * BYTE_AMOUNT)-1:0]	sdram_DQ
 );
 
-parameter CLK_TIME = 10;	// ns
+parameter CLK_TIME = 18;	// ns
 
 parameter tRP = 18;				// ns
 parameter tRFC = 66;			// ns
@@ -45,12 +45,13 @@ parameter tRCD = 18;			// ns
 localparam tCAS = 2;			// CLK
 // Unchangeable
 localparam tWR = 2;				// CLK
+
 // round up
 localparam INIT_100US_DELAY_CKS = 100_000 / CLK_TIME;
-localparam PRECHARGE_DELAY_CKS = (tRP + CLK_TIME) / CLK_TIME;
-localparam AUTOREFRESH_DELAY_CKS = (tRFC + CLK_TIME) / CLK_TIME;
+localparam PRECHARGE_DELAY_CKS = (tRP + (CLK_TIME/2)) / CLK_TIME;
+localparam AUTOREFRESH_DELAY_CKS = (tRFC + (CLK_TIME/2)) / CLK_TIME;
 localparam MODE_REGISTER_DELAY_CKS = tMRD;
-localparam ACTIVATE_DELAY_CKS = (tRCD + CLK_TIME) / CLK_TIME;
+localparam ACTIVATE_DELAY_CKS = (tRCD + (CLK_TIME/2)) / CLK_TIME;
 // round down
 localparam REFRESH_CKS = (tREF / REFRESH_CYCLES - CLK_TIME) / CLK_TIME;
 localparam REFRESH_CYCLES = 2**ROW_WIDTH;
@@ -90,11 +91,10 @@ localparam 	STATE_INIT_WAIT 				= 5'd0,
 			STATE_CLOSE_ALL_BANKS			= 5'd7,
 			STATE_AUTO_REFRESH				= 5'd8,
 			STATE_ACTIVATE					= 5'd9,
-			STATE_READ_BEGIN				= 5'd10,
-			STATE_WRITE_BEGIN				= 5'd11,
-			STATE_READ						= 5'd12,
-			STATE_WRITE						= 5'd13,
-			STATE_WRITE_BURST_STOP			= 5'd14
+			STATE_WRITE_BEGIN				= 5'd10,
+			STATE_READ						= 5'd11,
+			STATE_WRITE						= 5'd12,
+			STATE_WRITE_BURST_STOP			= 5'd13
 			;
 
 reg [43*8:0] state_str;
@@ -120,8 +120,6 @@ always @* begin
 			state_str = "AUTO_REFRESH";
 		STATE_ACTIVATE:
 			state_str = "STATE_ACTIVATE";
-		STATE_READ_BEGIN:
-			state_str = "READ_BEGIN";
 		STATE_WRITE_BEGIN:
 			state_str = "WRITE_BEGIN";
 		STATE_READ:
@@ -192,7 +190,7 @@ reg [15:0] refresh_counter = 0;
 // interface burst
 
 reg [$clog2(BURST_MAX+1):0] burst_remaining = 0;
-
+reg [$clog2(BURST_MAX+2):0] read_counter; 
 
 
 reg force_datamask;
@@ -273,22 +271,23 @@ always @* begin
 		STATE_WRITE_BURST_STOP: begin
 			command = COMMAND_BST;
 		end
-		STATE_READ_BEGIN: begin
-			command = COMMAND_READ;
-			sdram_ADDR = avl_col;
-			sdram_BA = avl_bank;
-			dbus_readdatavalid = 0;
-		end
 		STATE_READ: begin
-			dbus_readdatavalid = 1;
-			dbus_waitrequest = 0;
-			
-			if(burst_remaining) begin
-				command = COMMAND_NOP;
-			end else if(!command_burst_terminate_sent) begin
+			if(read_counter == 0) begin
+				command = COMMAND_READ;
+				sdram_ADDR = avl_col;
+				sdram_BA = avl_bank;
+			end else if(read_counter == burst_remaining) begin
 				command = COMMAND_BST;
 			end else begin
 				command = COMMAND_NOP;
+			end
+			
+			if((read_counter > 1) && (read_counter < burst_remaining + 2)) begin
+				dbus_readdatavalid = 1;
+				dbus_waitrequest = 0;
+			end else begin
+				dbus_readdatavalid = 0;
+				dbus_waitrequest = 1;
 			end
 		end
 		STATE_IDLE: begin
@@ -354,8 +353,9 @@ always @(posedge clk or negedge rst) begin
 					state <= STATE_AUTO_REFRESH;
 				end else if(dbus_read) begin
 					state <= STATE_ACTIVATE;
-					nxt_state <= STATE_READ_BEGIN;
+					nxt_state <= STATE_READ;
 					burst_remaining <= dbus_burstcount;
+					read_counter <= 0;
 					r_dbus_address <= dbus_address;
 				end else if(dbus_write) begin
 					state <= STATE_ACTIVATE;
@@ -399,21 +399,13 @@ always @(posedge clk or negedge rst) begin
 				delay_counter <= tWR - 1;
 				nxt_state <= STATE_CLOSE_ALL_BANKS;
 			end
-			STATE_READ_BEGIN: begin
-				// read data valid low, 2 cycles
-				burst_remaining <= burst_remaining - 2;
-				state <= STATE_NOP;
-				nxt_state <= STATE_READ;
-				delay_counter <= tCAS - 1 - 1;
-			end
+			
 			STATE_READ: begin
-				burst_remaining
+				read_counter <= read_counter + 1;
+				if(read_counter == burst_remaining + 3)
+					state <= STATE_CLOSE_ALL_BANKS;
 				// read data valid high burst_remaining - 2 cycles
 				// on last cycle send burst stop
-			end
-			STATE_READ_BURST_STOP: begin
-				// 2 last cycles read data valid high if data still reading
-				state <= STATE_CLOSE_ALL_BANKS;
 			end
 		endcase
 	end
