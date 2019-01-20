@@ -7,6 +7,7 @@ reg rst = 0;
 initial begin
 	clk = 0;
 	clk_90_degree = 0;
+	#1 rst = 1;
 end
 
 //
@@ -37,93 +38,107 @@ initial begin
 end
 
 always begin
-	#9 clk <= !clk;
+	#5 clk <= !clk;
 end
 
 always @* begin
-	clk_90_degree <= #4 clk;
+	clk_90_degree <= #2 clk;
 end
 
 
 reg [3:0] state = 0;
 reg [4:0] burst_left = 1;
 
-always @(posedge clk) begin
+always @* begin
 	case(state)
 		0: begin
-			rst <= 1;
-			// Load to first (0) bank, first row, first
-			dbus_address <= {13'b0000000000000,2'b00,9'b000000000, 1'b0};
-			dbus_writedata <= 16'h5555;
-			dbus_byteenable <= 2'b11;
-			dbus_burstcount <= 1;
-			dbus_read <= 0;
-			dbus_write <= 1;
-			if(!dbus_waitrequest) begin
-				state <= 1;
-				dbus_address <= {13'b0000000000000,2'b01,9'b000000000, 1'b0};
-				dbus_byteenable <= 2'b10;
-			end
+			dbus_address = {13'b0000000000000,2'b00,9'b000000000, 1'b0};
+			dbus_writedata = 16'hFFFF;
+			dbus_byteenable = 2'b11;
+			dbus_burstcount = 1;
+			dbus_write = 1;
+			dbus_read = 0;
 		end
 		1: begin
 			dbus_address <= {13'b0000000000000,2'b01,9'b000000000, 1'b0};
+			dbus_writedata = 16'h4444;
+			dbus_byteenable = 2'b11;
+			dbus_burstcount = 1;
+			dbus_write = 1;
+			dbus_read = 0;
+		end
+		2: begin
+			dbus_address = {13'b0000000000000,2'b01,9'b000001100, 1'b0};
+			dbus_writedata = 16'h4444;
+			dbus_byteenable = 2'b11;
+			dbus_burstcount = 8;
+			dbus_write = 1;
+			dbus_read = 0;
+		end
+		3: begin
+			dbus_address = {13'b0000000000000,2'b01,9'b000001100, 1'b0};
+			dbus_writedata = 16'h4444;
+			dbus_byteenable = 2'b11;
+			dbus_burstcount = 16;
+			dbus_write = 0;
+			dbus_read = 1;
+		end
+		4: begin
+			dbus_address = {13'b0000000000000,2'b01,9'b000001100, 1'b0};
+			dbus_writedata = 16'h4444;
+			dbus_byteenable = 2'b11;
+			dbus_burstcount = 1;
+			dbus_write = 0;
+			dbus_read = 1;
+		end
+		default: begin
+			dbus_address = {13'b0000000000000,2'b00,9'b000000000, 1'b0};
+			dbus_read = 0;
+			dbus_write = 0;
+			dbus_burstcount = 1;
+			dbus_byteenable = 2'b00;
+			dbus_writedata = 16'h0000;
+		end
+	endcase
+end
+
+
+always @(posedge clk) begin
+	case(state)
+		0: begin
+			if(!dbus_waitrequest) begin
+				state <= 1;
+			end
+		end
+		1: begin
 			if(!dbus_waitrequest) begin
 				state <= 2;
-				dbus_write <= 0;
-				dbus_read <= 0;
-				
+				burst_left <= 8 - 1;
 			end
 		end
 		2: begin
-			if(!dbus_write) begin
-				dbus_write <= 1;
-				dbus_address <= {13'b0000000000000,2'b01,9'b000001100, 1'b0};
-				burst_left <= 8;
-				dbus_burstcount <= 8;
-				dbus_byteenable <= 2'b11;
-			end
 			if(dbus_write && !dbus_waitrequest) begin
-				dbus_writedata <= dbus_writedata + 1;
 				if(burst_left)
 					burst_left <= burst_left - 1;
 				else begin
 					state <= 3;
-					dbus_write <= 0;
-					dbus_read <= 0;
+					burst_left <= 16 - 1;
 				end
 			end
 		end
 		3: begin
-			if(!dbus_read) begin
-				dbus_read <= 1;
-				dbus_address <= {13'b0000000000000,2'b01,9'b000001100, 1'b0};
-				burst_left <= 5;
-				dbus_burstcount <= 5;
-				dbus_byteenable <= 2'b11;
-			end
-			if(dbus_readdatavalid && !dbus_waitrequest) begin
+			if(dbus_read && dbus_readdatavalid && !dbus_waitrequest) begin
 				if(burst_left)
 					burst_left <= burst_left - 1;
-				
-			end
-			if(burst_left == 0) begin
-				state <= 4;
-				dbus_write <= 0;
-				dbus_read <= 0;
+				else begin
+					state <= 4;
+					burst_left <= 1;
+				end
 			end
 		end
 		4: begin
-			if(!dbus_read) begin
-				dbus_read <= 1;
-				dbus_address <= {13'b0000000000000,2'b01,9'b000001100, 1'b0};
-				dbus_burstcount <= 1;
-				dbus_byteenable <= 2'b11;
-			end
-			if(dbus_read && dbus_readdatavalid) begin
-				
+			if(dbus_read && dbus_readdatavalid && !dbus_waitrequest) begin
 				state <= 5;
-				dbus_write <= 0;
-				dbus_read <= 0;
 			end
 		end
 		5: begin

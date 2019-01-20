@@ -17,8 +17,7 @@ Host must give a avalon bus clock (clk signal) and (clk_90_degrees) which is ava
 This controller implements Avalon MM bus interface.
 It refreshes memory with autorefresh in between any transfers.
 This controller supports burst transactions and is highly configurable on any level from column, row, bank sizes. This controller does not support multiple chips with chipselect, but can be made so with a little modifications.
-Theoretical speed is about 99% of bus width multiplied to clock speed.
-This controller does not close any bank< allowing multiple low latency accesses to same row until refresh is requested by internal finite state machine.
+Theoretical speed is about 99% of bus width multiplied to clock speed when reads or writes data in full-page bursts.
 sdram_* connects to sdram pins and dbus (short from databus) is Avalon-MM bus.
 
 # 3rd party
