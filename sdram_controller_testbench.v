@@ -1,13 +1,14 @@
+`timescale 1ns/1ns
 module sdram_controller_testbench();
 
 reg clk;
 reg clk_90_degree;
-reg rst = 0;
+reg arst_n = 0;
 
 initial begin
 	clk = 0;
 	clk_90_degree = 0;
-	#1 rst = 1;
+	#1 arst_n = 1;
 end
 
 //
@@ -91,6 +92,14 @@ always @* begin
 			dbus_write = 0;
 			dbus_read = 1;
 		end
+		5: begin
+			dbus_address = {13'b0000000000000,2'b01,9'b000001100, 1'b0};
+			dbus_writedata = 16'h8677;
+			dbus_byteenable = 2'b11;
+			dbus_burstcount = 1;
+			dbus_write = 1;
+			dbus_read = 0;
+		end
 		default: begin
 			dbus_address = {13'b0000000000000,2'b00,9'b000000000, 1'b0};
 			dbus_read = 0;
@@ -142,7 +151,9 @@ always @(posedge clk) begin
 			end
 		end
 		5: begin
-		
+			if(dbus_write && !dbus_waitrequest) begin
+				state <= 6;
+			end
 		end
 	endcase
 end
@@ -152,7 +163,7 @@ end
 sdram_controller u0(
 
 	.clk(clk),
-	.rst(rst),
+	.arst_n(arst_n),
 	
 	.*
 );

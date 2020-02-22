@@ -1,11 +1,10 @@
-`timescale 1ns/1ns
 
 module sdram_controller(
 	input 	wire 		clk,
-	input	wire		rst,
+	input	wire		arst_n,
 	input	wire		clk_90_degree,
 	
-	output reg			init_done = 1,
+	output reg			init_done,
 	
 	// Address for first word must be burst aligned:
 	// So when burst is 8 words then 3 + 1 (word_size) least significant bits of address must be low at first access
@@ -29,7 +28,7 @@ module sdram_controller(
 	output	wire							sdram_nWE,
 	output	reg  [BANK_WIDTH-1 		:0]		sdram_BA = {BANK_WIDTH{1'b0}},
 	output	reg  [ROW_WIDTH-1  		:0]		sdram_ADDR = {ROW_WIDTH{1'd0}},
-	output	reg  [BYTE_AMOUNT-1	:0]			sdram_DM,
+	output	wire  [BYTE_AMOUNT-1	:0]			sdram_DM,
 	inout	wire [(8 * BYTE_AMOUNT)-1:0]	sdram_DQ
 );
 
@@ -41,8 +40,8 @@ parameter tMRD = 2;				// CLK
 parameter tREF = 64000000;		// ns
 parameter tRCD = 18;			// ns
 
-// Unchangeable
-localparam tCAS = 2;			// CLK
+
+parameter tCAS = 3'd3;			// CLK
 // Unchangeable
 localparam tWR = 2;				// CLK
 
@@ -96,7 +95,7 @@ localparam 	STATE_INIT_WAIT 				= 5'd0,
 			STATE_WRITE						= 5'd12,
 			STATE_WRITE_BURST_STOP			= 5'd13
 			;
-
+`ifdef DEBUG
 reg [43*8:0] state_str;
 always @* begin
 	case(state)
@@ -132,6 +131,7 @@ always @* begin
 			state_str = "UNKNOWN STATE!!!";
 	endcase
 end
+`endif
 
 assign sdram_CLK = clk_90_degree;
 
@@ -143,7 +143,7 @@ assign sdram_nRAS = command[2];
 assign sdram_nCAS = command[1];
 assign sdram_nWE = command[0];
 
-
+`ifdef DEBUG
 reg [8*12:0] cmd_str;
 always @* begin
 	case(command)
@@ -163,9 +163,11 @@ always @* begin
 			cmd_str = "AUTOREFRESH ";
 		COMMAND_LMR:
 			cmd_str = "LMR         ";
+		default:
+			cmd_str = "UNKNOWN     ";
 	endcase
 end
-
+`endif
 localparam 	COMMAND_NOP = 4'b0111,
 			COMMAND_ACTIVE = 4'b0011,
 			COMMAND_READ = 4'b0101,
@@ -181,7 +183,7 @@ reg [4:0] state = STATE_INIT_WAIT;
 reg [4:0] nxt_state = STATE_INIT_WAIT;
 
 // Goes max to min
-reg [15:0] delay_counter = 0;
+reg [31:0] delay_counter = 0;
 
 // goes min to max and substracts REFRESH_CKS on overflow
 reg refresh_counter_enable = 0;
@@ -194,7 +196,6 @@ reg [$clog2(BURST_MAX+2):0] read_counter;
 
 
 reg force_datamask;
-reg command_burst_terminate_sent = 0; // for read
 
 assign sdram_DQ = (state == STATE_WRITE || state == STATE_WRITE_BEGIN) ? dbus_writedata : {BYTE_AMOUNT*8{1'bZ}};
 
@@ -238,7 +239,7 @@ always @* begin
 			sdram_ADDR = {
 				1'b0,		// Programmed burst length
 				2'b00,		// STD Operation
-				3'b010,		// CAS Latency = 2
+				tCAS,		// CAS Latency = 2
 				4'b0111		// FULL Page Burst
 			};
 		end
@@ -282,7 +283,7 @@ always @* begin
 				command = COMMAND_NOP;
 			end
 			
-			if((read_counter > 1) && (read_counter < burst_remaining + 2)) begin
+			if((read_counter > tCAS-1) && (read_counter < burst_remaining + tCAS)) begin
 				dbus_readdatavalid = 1;
 				dbus_waitrequest = 0;
 			end else begin
@@ -300,10 +301,16 @@ always @* begin
 	endcase
 end 
 
+initial begin
+	delay_counter <= 0;
+	state <= STATE_INIT_WAIT;
+	refresh_counter_enable <= 0;
+	refresh_counter <= 0;
+	init_done <= 0;
+end
 
-
-always @(posedge clk or negedge rst) begin
-	if(!rst) begin
+always @(posedge clk or negedge arst_n) begin
+	if(!arst_n) begin
 		delay_counter <= 0;
 		state <= STATE_INIT_WAIT;
 		refresh_counter_enable <= 0;
@@ -316,34 +323,34 @@ always @(posedge clk or negedge rst) begin
 		case (state)
 			STATE_NOP: begin
 				if(delay_counter > 0)
-					delay_counter <= delay_counter - 1;
+					delay_counter <= delay_counter - 1'd1;
 				else
 					state <= nxt_state;
 			end
 			STATE_INIT_WAIT: begin
 				state <= STATE_NOP;
 				nxt_state <= STATE_INIT_PRECHARGE_ALL;
-				delay_counter <= INIT_100US_DELAY_CKS - 1;
+				delay_counter <= INIT_100US_DELAY_CKS - 1'd1;
 			end
 			STATE_INIT_PRECHARGE_ALL: begin
 				state <= STATE_NOP;
 				nxt_state <= STATE_INIT_ISSUE_AUTOREFRESH_1;
-				delay_counter <= PRECHARGE_DELAY_CKS - 1;
+				delay_counter <= PRECHARGE_DELAY_CKS - 1'd1;
 			end
 			STATE_INIT_ISSUE_AUTOREFRESH_1: begin
 				state <= STATE_NOP;
 				nxt_state <= STATE_INIT_ISSUE_AUTOREFRESH_2;
-				delay_counter <= AUTOREFRESH_DELAY_CKS - 1;
+				delay_counter <= AUTOREFRESH_DELAY_CKS - 1'd1;
 			end
 			STATE_INIT_ISSUE_AUTOREFRESH_2: begin
 				state <= STATE_NOP;
 				nxt_state <= STATE_INIT_ISSUE_MRS;
-				delay_counter <= AUTOREFRESH_DELAY_CKS - 1;
+				delay_counter <= AUTOREFRESH_DELAY_CKS - 1'd1;
 			end
 			STATE_INIT_ISSUE_MRS: begin
 				state <= STATE_NOP;
 				nxt_state <= STATE_IDLE;
-				delay_counter <= MODE_REGISTER_DELAY_CKS - 1;
+				delay_counter <= MODE_REGISTER_DELAY_CKS - 1'd1;
 				refresh_counter <= 0;
 				refresh_counter_enable <= 1;
 			end
@@ -367,42 +374,42 @@ always @(posedge clk or negedge rst) begin
 			STATE_CLOSE_ALL_BANKS: begin
 				state <= STATE_NOP;
 				nxt_state <= STATE_IDLE;
-				delay_counter <= PRECHARGE_DELAY_CKS - 1;
+				delay_counter <= PRECHARGE_DELAY_CKS - 1'd1;
 			end
 			STATE_AUTO_REFRESH: begin
 				refresh_counter <= refresh_counter - REFRESH_CKS;
-				delay_counter <= AUTOREFRESH_DELAY_CKS - 1;
+				delay_counter <= AUTOREFRESH_DELAY_CKS - 1'd1;
 				state <= STATE_NOP;
 				nxt_state <= STATE_IDLE;
 			end
 			STATE_ACTIVATE: begin
 				state <= STATE_NOP;
-				delay_counter <= ACTIVATE_DELAY_CKS - 1;
+				delay_counter <= ACTIVATE_DELAY_CKS - 1'd1;
 			end
 			STATE_WRITE_BEGIN: begin
 				if(burst_remaining == 1)
 					state <= STATE_WRITE_BURST_STOP;
 				else begin
 					state <= STATE_WRITE;
-					burst_remaining <= burst_remaining - 1;
+					burst_remaining <= burst_remaining - 1'd1;
 				end
 			end
 			STATE_WRITE: begin
 				if(burst_remaining > 1) begin
-					burst_remaining <= burst_remaining - 1;
+					burst_remaining <= burst_remaining - 1'd1;
 				end else begin
 					state <= STATE_WRITE_BURST_STOP;
 				end
 			end
 			STATE_WRITE_BURST_STOP: begin
 				state <= STATE_NOP;
-				delay_counter <= tWR - 1;
+				delay_counter <= tWR - 1'd1;
 				nxt_state <= STATE_CLOSE_ALL_BANKS;
 			end
 			
 			STATE_READ: begin
-				read_counter <= read_counter + 1;
-				if(read_counter == burst_remaining + 3)
+				read_counter <= read_counter + 1'd1;
+				if(read_counter == burst_remaining + tCAS + 1)
 					state <= STATE_CLOSE_ALL_BANKS;
 				// read data valid high burst_remaining - 2 cycles
 				// on last cycle send burst stop
